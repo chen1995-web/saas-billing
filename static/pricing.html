@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SaaS Billing Starter · Pricing</title>
+<style>
+  :root { --bg:#0b1020; --panel:#131a2e; --line:#263152; --fg:#e8ecf8; --muted:#8b96b5; --accent:#5b8cff; --ok:#34d399; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 -apple-system,"PingFang SC",sans-serif; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  h1 { font-size:18px; margin:0; }
+  .badge { font-size:12px; color:var(--ok); border:1px solid var(--line); border-radius:999px; padding:2px 10px; }
+  .lang-switch { display:flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; margin-left:10px; }
+  .lang-switch button { background:transparent; color:var(--muted); border:0; border-radius:0; padding:3px 12px; cursor:pointer; width:auto; font-size:12px; }
+  .lang-switch button.active { background:var(--accent); color:#fff; }
+  main { max-width:1100px; margin:0 auto; padding:24px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  .card.featured { border-color:var(--accent); }
+  .plan { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .price { font-size:30px; font-weight:700; margin:8px 0; }
+  .price small { font-size:13px; color:var(--muted); font-weight:400; }
+  ul { list-style:none; padding:0; margin:12px 0; }
+  li { padding:5px 0; color:var(--muted); }
+  li.on { color:var(--fg); }
+  li.on::before { content:"✓ "; color:var(--ok); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 14px; cursor:pointer; width:100%; font-size:14px; }
+  #status { margin-top:24px; padding:14px 16px; background:var(--panel); border:1px solid var(--line); border-radius:10px; min-height:48px; }
+  code { background:#0d1428; padding:2px 6px; border-radius:4px; color:#9db4ff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SaaS Billing Starter</h1>
+  <div style="display:flex; align-items:center;">
+    <div class="lang-switch" id="lang-switch">
+      <button data-lang="en">EN</button>
+      <button data-lang="zh">中文</button>
+    </div>
+    <span class="badge" id="badge">demo mode · no Stripe key needed</span>
+  </div>
+</header>
+<main>
+  <div class="grid" id="plans"></div>
+  <div id="status">Click a plan button below to start the billing loop.</div>
+</main>
+<script>
+// --- lightweight i18n: EN default + ZH toggle, persisted in localStorage ---
+const FEATURES = ["1 workspace","5 seats","10 GB","audit log","SSO","SLA","100 seats","1 TB"];
+const PLANS_AMOUNT = { free:0, pro:2900, team:9900, scale:29900 };
+
+const I18N = {
+  en: {
+    title: "SaaS Billing Starter · Pricing",
+    badge: "demo mode · no Stripe key needed",
+    status_default: "Click a plan button below to start the billing loop.",
+    price_unit: "/mo",
+    subscribe_btn: "Subscribe to {plan}",
+    checkout_log: "Checkout started: {plan} → session {session_id}",
+    webhook_log: "webhook: {action} (skipped={skipped})",
+    workspace_suffix: " · workspace {ws}",
+    ent_log: "Current: {plan} / {status} / {seats} seats · SSO={sso} SLA={sla}",
+    plans: { free: "Free", pro: "Pro", team: "Team", scale: "Scale" },
+    features: {
+      "1 workspace": "1 workspace", "5 seats": "5 seats", "10 GB": "10 GB",
+      "audit log": "audit log", "SSO": "SSO", "SLA": "SLA",
+      "100 seats": "100 seats", "1 TB": "1 TB"
+    }
+  },
+  zh: {
+    title: "SaaS Billing Starter · 定价",
+    badge: "演示模式 · 无需 Stripe key",
+    status_default: "点击下方按钮开始体验计费闭环。",
+    price_unit: "/月",
+    subscribe_btn: "订阅 {plan}",
+    checkout_log: "发起 Checkout：{plan} → session {session_id}",
+    webhook_log: "webhook：{action}（skipped={skipped}）",
+    workspace_suffix: " · 当前工作区 {ws}",
+    ent_log: "当前：{plan} / {status} / {seats} seats · SSO={sso} SLA={sla}",
+    plans: { free: "免费版", pro: "专业版", team: "团队版", scale: "规模版" },
+    features: {
+      "1 workspace": "1 个工作区", "5 seats": "5 个席位", "10 GB": "10 GB",
+      "audit log": "审计日志", "SSO": "SSO", "SLA": "SLA",
+      "100 seats": "100 个席位", "1 TB": "1 TB"
+    }
+  }
+};
+
+let lang = localStorage.getItem("lang") === "zh" ? "zh" : "en";
+let plansCache = null;
+let statusState = { kind: "default" };
+
+function t(key, vars) {
+  let s = (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
+  vars = vars || {};
+  for (const k in vars) s = s.split("{" + k + "}").join(String(vars[k]));
+  return s;
+}
+function planName(id) { return (I18N[lang].plans && I18N[lang].plans[id]) || id; }
+function featureLabel(f) { return (I18N[lang].features && I18N[lang].features[f]) || f; }
+
+function setLang(l) {
+  lang = l;
+  localStorage.setItem("lang", l);
+  applyLang();
+}
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.title = t("title");
+  document.getElementById("badge").textContent = t("badge");
+  document.getElementById("status").textContent = renderStatus();
+  document.querySelectorAll("#lang-switch button").forEach(b => {
+    b.classList.toggle("active", b.dataset.lang === lang);
+  });
+  renderPlans();
+}
+
+function renderStatus() {
+  if (statusState.kind === "default") return t("status_default");
+  const ws = localStorage.getItem("ws") || "ws_demo";
+  return t(statusState.fmt, statusState.vars) + t("workspace_suffix", { ws: ws });
+}
+
+function log(fmt, vars) {
+  statusState = { kind: "log", fmt: fmt, vars: vars || {} };
+  document.getElementById("status").textContent = renderStatus();
+}
+
+function renderPlans() {
+  const box = document.getElementById("plans");
+  box.innerHTML = "";
+  if (!plansCache) return;
+  plansCache.forEach(p => {
+    const c = document.createElement("div");
+    c.className = "card" + (p.id === "pro" ? " featured" : "");
+    c.innerHTML = `<div class="plan">${planName(p.id)}</div>
+      <div class="price">$${(p.price_cents/100).toFixed(2)}<small>${t("price_unit")}</small></div>
+      <ul>${FEATURES.map(f => `<li class="${p.features.includes(f) ? "on" : ""}">${featureLabel(f)}</li>`).join("")}</ul>
+      <button data-plan="${p.id}">${t("subscribe_btn", { plan: planName(p.id) })}</button>`;
+    box.appendChild(c);
+  });
+  box.querySelectorAll("button").forEach(b => b.onclick = () => subscribe(b.dataset.plan));
+}
+
+async function boot() {
+  const r = await fetch("/api/plans").then(r => r.json());
+  plansCache = r.plans;
+  renderPlans();
+}
+
+async function subscribe(plan) {
+  const ws = localStorage.getItem("ws") || "ws_demo";
+  const r = await fetch("/api/subscribe", { method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ workspace_id: ws, plan_id: plan, email:"buyer@example.com" }) }).then(r=>r.json());
+  log("checkout_log", { plan: planName(r.plan), session_id: r.session_id });
+  // simulate the webhook that Stripe would deliver
+  const w = await fetch("/webhooks/stripe", { method:"POST", headers:{"Content-Type":"application/json", "X-Workspace": ws},
+    body: JSON.stringify({ id:"evt_"+plan, type:"checkout.session.completed",
+      data:{ object:{ customer:"cus_demo", subscription:"sub_demo", amount_total: PLANS_AMOUNT[plan] } } }) }).then(r=>r.json());
+  log("webhook_log", { action: w.action, skipped: w.skipped });
+  refreshEnt(ws);
+}
+
+async function refreshEnt(ws) {
+  const e = await fetch("/api/entitlements", { headers:{"X-Workspace": ws} }).then(r=>r.json());
+  log("ent_log", { plan: planName(e.plan), status: e.status, seats: e.seats,
+                  sso: e.features.sso, sla: e.features.sla });
+}
+
+document.querySelectorAll("#lang-switch button").forEach(b => {
+  b.onclick = () => setLang(b.dataset.lang);
+});
+applyLang();
+boot();
+</script>
+</body>
+</html>

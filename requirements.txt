@@ -1,0 +1,4 @@
+fastapi>=0.100
+uvicorn>=0.20
+# only needed when running against the real Stripe API (non-demo mode)
+httpx>=0.24
